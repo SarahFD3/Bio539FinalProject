@@ -1,0 +1,151 @@
+---
+title: "GZA White Box Well Analysis Code"
+author: "Sarah DeSimone"
+date: "May 10, 2019"
+output:
+  html_document:
+    df_print: paged
+  PDF: default
+  pdf_document: default
+---
+Introduction
+
+The study site is a 154-acre active landfill in New England. Long-term monitoring of groundwater and surface water has been conducted over the past twenty years in accordance with an EPA-approved monitoring and remediation plan. CERLCA requires that extended remediation plans must submit a full status report to EPA every five years. To show the effectiveness of the applied remedial techniques, time series analyses has been performed on the past five years of sampling data. Currently, the analyses are conducted using the software program Carstat. Carstat, is a “black box” program, in which users input data and export plots without intermediate steps. This program has been used for the majority of the project life and the particular coding behind the statistical analyses is unknown. Therefore, RStudio was utilized to recreate this “black box”, enabling future reproducibility of the data analyses. This code is referred to as White Box.
+
+Source of Data and Previous Data Analysis
+
+Contaminant level data was collected from predetermined locations during quarterly sampling rounds from 2003 to the present (2019). Laboratory testing was performed on each sample to obtain results for 53 volatile organic compouns (VOCs), 43 semi-volatile organic compound (SVOCs), and the following metals: arsenic, beryllium, cadmium, chromium, cyanide, iron, lead, manganese, nickel, nitrates and vanadium. Results from these sampling rounds were stored in SQL-based proprietary relational database. 
+
+Analytical results from the quarterly groundwater sampling rounds were submitted to the appropriate Federal and State regulatory agencies as tables. After five years, EPA required a time series analysis over five years at a 95% confidence level to assess any statistically significant changes to the levels of the identified contaminants of concern (COCs) in particular sampling locations that showed elevated levels of a particular COC.
+
+Exploratory Data Analysis
+
+In review of the entire body of data, it was determined that the subset of data between 2008 and 2018 contained the most complete set of sampling locations that were tested for the three contaminant groups (VOCs, SVOCs, and metals). The remaining data was corrected for duplicates, mislabeled samples, mislabeled sampling locations, mislabeled units. This subset was cross-referenced with the list of sampling location identified for time series plots in previous annual reports to ensure that all the sampling location needed for a normal time series analysis were present. The dataset was uploaded into RStudio for exploratory data analysis. The final dataset included 54 sampling locations, divided by quarter years (Jan-March, April-June, July-Sept, Oct-Dec). Each location was tested for 106 constituents, with a resulting dataset of approximately 82,000 lines. Any chemicals which did not have an establish action level by the EPA was given an action level of 0.
+
+The final data was saved and exported into a CSV to be imported into R. 
+
+THe following libraries were used for this RTool
+```{r library, message=FALSE, warning=FALSE, paged.print=FALSE}
+library(ggplot2)
+library(readr)
+library(knitr)
+library(tidyr)
+library(trend)
+library(jpeg)
+library(magick)
+library(here) 
+library(magrittr)
+library(stringr)
+library(reshape2)
+library(ggthemes)
+library(graphics)
+``` 
+
+Import Data
+
+In R, a working directory was set, where the data used in the analysis will be collected from and where the produce plots will be saved after analysis. Before analysis, NA’s were eliminated, bringing the sample size down from 82,229 to 82,218. Any chemicals with an action level of 0 were removed by subsetting the chemicals with an action level not equal to 0 into a new data frame. From here, another subset was created to look at one location based on location name. This final data set known as “locdat” (meaning location data) was used for the analysis. This data set automatically updates when a location name is changed.   
+
+```{r setup, echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+wd <- "C:/Users/sarah.desimone/Desktop/URI Notes/BIO539/SFDBIO539FinalProj/"
+setwd(wd)
+dat <- read_csv("chemdata.csv")
+View(dat)  #choose data file, examine data using view()
+dat2 <- na.omit(dat) #remove all NAs
+dat3 <- subset(dat2, actionlvl != "0")
+locdat <- subset(dat3, loc == "MW03ML12A") #Choose well to look at
+```
+
+Approach
+
+The original CarStat program ran all constituents automatically when the location name was chosen. To recreate this approach, a function was written where the plot (with trend analysis) is run for each chemical. Therefore the only imput needed is the name of the location.
+
+```{r ChooseChem, echo=TRUE}
+locdat <- subset(dat3, loc == "MW03ML12A") #Choose location to look at
+```
+
+
+The function “unique()” was used to make each chemical as independent. From there, a for-loop repeated the code for each chemical automatically. The code has been programed to do each of the following for each chemical: 1) Plot change in chemical level (ug/L) over the sampling period with corresponding action level (indicated by dashed horizontal line), 2) Update title based on chemical and location name, 3) Run trend analysis over the last five years (sample measurements included were colored red), 4) Specify whether trend is increasing or decreasing, 5) Specify whether the change in trend over the last five years is significant, 6) Specify which sample measurement was “detected” at the lab where the original sample collected was analyzed (detected measurements were filled-in points, non-detected were open points).  Plots will also be printed and saved in pdf, titled the respective plot title (which also updates based on chemical and location name). 
+
+```{r WhiteBox, echo=TRUE, message=FALSE, warning=FALSE, paged.print=TRUE}
+chem.graph <- function(df, na.rm = TRUE, ...){
+
+  chem_list <- unique(df$chemical)
+
+  for (i in seq_along(chem_list)) {
+    sigdat <- subset(df, df$chemical==chem_list[i])
+
+    #run code(don't need to change anything)
+    val <- sigdat$value_stand 
+    quarter <- sigdat$quarter
+    chemical <- sigdat$chemical
+    loc <- sigdat$loc
+    action <- sigdat$actionlvl
+    flag <- sigdat$flag
+
+    #Trend analysis 
+    date = max(sigdat$quarter) - 5
+    date
+    trend <- subset(sigdat, quarter > date)
+
+    t.val <-trend$value_stand
+    t.quarter <- trend$quarter
+    t.loc <- trend$loc
+
+    fit <- lm(t.val~t.quarter)
+
+    #Plot time series with significance
+    cp <- ggplot(sigdat, aes(x = quarter, y = val))+
+            geom_point(aes(x = quarter, y = val, size = 2, 
+                           color = ifelse(quarter>=date, "red", NA), shape = flag))+
+            geom_path(aes(x = quarter, y = val, color = NA))+
+            geom_path(aes(x = quarter, y = val, color = ifelse(quarter>=date, "red", NA)))+
+            labs(x = "Quarter",
+                  y = "Chemical Value (ug/L)",
+                  color = "Time Series",
+                  title = paste("Change in", chemical,
+                                 "at", loc),
+                  subtitle = paste(ifelse(summary(fit)$coef[2,4]<0.05, "Significantly", " "),
+                                    ifelse(mean(diff(t.val))>0, "Increasing Trend", "Decreasing Trend")))+
+            geom_hline(aes(yintercept = max(action), linetype = "dashed"))+
+            scale_y_log10()+
+            theme_minimal()+
+            theme(plot.title = element_text(hjust = 0.5),
+                  plot.subtitle = element_text(hjust = 0.5))+
+            scale_color_discrete(name = "Time Series Legend",
+                                  breaks = ifelse(quarter>=date, "red", NA),
+                                  labels = ifelse(quarter>=date, "Trend Analysis", "Samples"))+
+            scale_shape_manual(name = NULL,
+                                breaks = c("Y", "N"),
+                                labels = c("Detection", "No Detection"),
+                                values = c(22, 15))+
+            scale_size(name = NULL,
+                        breaks = NULL)+
+            
+            scale_linetype_manual(name = NULL,
+                                  labels = "Action Level",
+                                  values = "dashed")+
+            ggsave(last_plot()$labels$title, device = "pdf", width = 10, height = 5, dpi = 500)
+           
+    pdf(cp)
+    dev.off()
+    }
+  }
+
+chem.graph(locdat)
+```
+
+
+Results and Interpretation
+
+The resulting time series plots were compared to the plots exported from the “black box” program. In general, the plots produced were similar for significant trends (increasing and decreasing) across all media. In the instances where they were not, it was clear that some sampling points were not present in the RStudio dataset. This discrepancy may indicate either duplicates in the Carstat database, or loss of data between the SQL database and RStudio. Either situation indicates the paramount importance of clean data inputs, opening avenues of further inquires as to the veracity of the data in either database. 
+
+The exported plots from the RStudio code were successful in portraying the needed elements to duplicate the Carstat results. These elements include a time series analysis on the past five years of data, by sampling quarter, with indications as to whether the sampling result was detected or not detected by the lab equipment that was used to analyze it. In addition to the Carstat output, the EPA action level was also added to the plot (if applicable) for a better visualization of what the sampling results mean in the context of regulatory obligations. The RStudio code also indications general, but not significant, increasing and decreasing trends. Both instances provide more accurate indications of constituent movements. 
+
+There were 11 locations identified with Significantly Decreasing Trends and 23 locations with Significantly Increasing Trends. Twenty-seven locations had a general Decreasing Trend and 21 had a general, but not significant Increasing Trend. 
+
+Discussion
+
+This is the first step in a long process to effectively analyze containment data for this site. While the code is successful in that it works and produces similar plots compared to CarStat, there is much work to be done. For example, addressing possible missing data points and the dis-similar plots will need to be address. As mentioned earlier, these flaws could be due to data loss from Equis to R or perhaps there were several duplicated samples that were removed during the data cleaning. It is important to know why these issues are occurring before moving on to the next steps as well as do a large data overhaul and cleaning. The next steps should be to fine tune the code and see if there are better or more efficient functions that could be used to simplify the code.   
+
+While there is much that still needs to be done before the code is ready for use, the creation of this tool was a major step forward into completing an effective and efficient code for application. In comparison to CarStat, using this R code to develop these plots is more ideal specifically since the user will have access to the code and would no longer be a “black box”. In addition, R is currently a very popular program amongst scientists, data analysts, etc. which will allow the user to share and exchange coding to update or improve their current analysis if they wish. In addition, R, specifically R studio, is a user-friendly program with many resources and sites dedicated to exchanging methods of analysis, which makes it much easier for the user to adjust and update their code. These qualities will help to ensure that the original problem in this analysis, which resulted from lack of resources and limited/no access to the original coding, will not be repeated. 
+
